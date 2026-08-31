@@ -19,6 +19,8 @@ from app.models import (
     TransactionStatus,
 )
 
+from app.agent.graph import run_recovery_agent
+
 router = APIRouter()
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -35,7 +37,12 @@ def verify_razorpay_signature(raw_body: bytes, signature: str, secret: str) -> b
 
 async def background_agent_trigger(transaction_id: str):
     logger.info(f"Triggering recovery agent for transaction {transaction_id}")
-    # Phase 3 will connect the LangGraph workflow here
+    try:
+        res = await run_recovery_agent(transaction_id)
+        logger.info(f"Recovery agent completed for {transaction_id}: {res.get('final_action')} (status={res.get('policy_gate_status')})")
+    except Exception as e:
+        logger.error(f"Error executing recovery agent for transaction {transaction_id}: {e}", exc_info=True)
+
 
 
 @router.post("/razorpay", status_code=status.HTTP_200_OK)
