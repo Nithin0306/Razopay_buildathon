@@ -55,8 +55,9 @@ async def run_recovery_agent(transaction_id: str) -> dict[str, Any]:
             logger.error(f"Transaction {transaction_id} not found for agent execution")
             return {"error": "Transaction not found"}
 
-        # Load customer intervention count
+        # Load customer data
         interventions = 0
+        cust_email = cust_phone = cust_name = None
         if tx.customer_id:
             cust_res = await session.execute(
                 select(Customer).where(Customer.customer_id == tx.customer_id)
@@ -64,14 +65,20 @@ async def run_recovery_agent(transaction_id: str) -> dict[str, Any]:
             cust = cust_res.scalar_one_or_none()
             if cust:
                 interventions = cust.total_interventions
+                cust_email = cust.email
+                cust_phone = cust.phone
+                cust_name = cust.name
 
-        # Prepare initial state
+        # Build initial state — customer contact fields included for execute_node
         initial_state: AgentState = {
             "transaction_id": str(tx.id),
             "razorpay_entity_id": tx.razorpay_entity_id,
             "entity_type": tx.entity_type.value if hasattr(tx.entity_type, "value") else str(tx.entity_type),
             "amount_paise": tx.amount_paise,
             "customer_id": tx.customer_id,
+            "customer_email": cust_email,
+            "customer_phone": cust_phone,
+            "customer_name": cust_name,
             "error_code": tx.razorpay_error_code,
             "error_reason": tx.razorpay_error_reason,
             "error_source": tx.razorpay_error_source,
@@ -113,13 +120,18 @@ async def run_recovery_agent(transaction_id: str) -> dict[str, Any]:
                 cust.total_interventions += 1
                 cust.last_intervention_at = datetime.now(timezone.utc)
 
-        # Update Transaction status & recovery links
-        action_res = final_state.get("action_result", {})
-        if action_res.get("recovery_link_id"):
-            tx.recovery_link_id = action_res["recovery_link_id"]
+        # Update Transaction status & recovery link from normalised action_result
+        action_res = final_state.get("action_result") or {}
+        recovery_link_id = action_res.get("recovery_link_id")
+        final_action = final_state.get("final_action", "")
+
+        if recovery_link_id:
+            tx.recovery_link_id = recovery_link_id
             tx.recovery_link_url = action_res.get("recovery_link_url")
             tx.status = TransactionStatus.RECOVERING
-        elif final_state.get("final_action") == "escalate_to_human":
+        elif final_action == "schedule_retry":
+            tx.status = TransactionStatus.RECOVERING
+        elif final_action == "escalate_to_human" or "blocked" in pg_status_str:
             tx.status = TransactionStatus.ESCALATED
         else:
             tx.status = TransactionStatus.RECOVERING
@@ -127,3 +139,4 @@ async def run_recovery_agent(transaction_id: str) -> dict[str, Any]:
         await session.commit()
 
         return dict(final_state)
+

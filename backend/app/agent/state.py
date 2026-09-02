@@ -7,6 +7,9 @@ class AgentState(TypedDict, total=False):
     entity_type: str
     amount_paise: int
     customer_id: Optional[str]
+    customer_email: Optional[str]
+    customer_phone: Optional[str]
+    customer_name: Optional[str]
     error_code: Optional[str]
     error_reason: Optional[str]
     error_source: Optional[str]
@@ -31,4 +34,4 @@ class AgentState(TypedDict, total=False):
 
     # Populated by execute node
     action_result: dict[str, Any]
-    executed_at: str
+

@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 from google import genai
@@ -12,6 +11,7 @@ from app.agent.prompts import (
 )
 from app.agent.state import AgentState
 from app.config import get_settings
+from app.tools import recovery_actions
 
 settings = get_settings()
 logger = logging.getLogger(__name__)
@@ -165,39 +165,51 @@ async def policy_gate_node(state: AgentState) -> dict[str, Any]:
 
 async def execute_node(state: AgentState) -> dict[str, Any]:
     final_action = state.get("final_action", "escalate_to_human")
-    now_iso = datetime.now(timezone.utc).isoformat()
+    tx_id = state.get("transaction_id", "")
+    entity_id = state.get("razorpay_entity_id", "")
+    entity_type = state.get("entity_type", "payment")
+    policy_status = state.get("policy_gate_status", "passed")
 
     if final_action == "generate_recovery_link":
-        link_id = f"plink_{state.get('razorpay_entity_id', 'test')}"
-        short_url = f"https://rzp.io/i/{link_id}"
-        result = {
-            "status": "success",
-            "action": "generate_recovery_link",
-            "recovery_link_id": link_id,
-            "recovery_link_url": short_url,
-            "details": "Payment link generated successfully.",
-        }
-    elif final_action == "schedule_retry":
-        result = {
-            "status": "scheduled",
-            "action": "schedule_retry",
-            "scheduled_at": now_iso,
-            "details": "Automated retry scheduled in 2 hours.",
-        }
-    elif final_action == "attempt_manual_charge":
-        result = {
-            "status": "initiated",
-            "action": "attempt_manual_charge",
-            "details": "Manual charge command initiated.",
-        }
-    else:
-        result = {
-            "status": "escalated",
-            "action": "escalate_to_human",
-            "details": "Escalated to human support queue.",
-        }
+        result = recovery_actions.generate_recovery_link(
+            transaction_id=tx_id,
+            razorpay_entity_id=entity_id,
+            amount_paise=state.get("amount_paise", 0),
+            customer_id=state.get("customer_id"),
+            customer_email=state.get("customer_email"),
+            customer_phone=state.get("customer_phone"),
+            customer_name=state.get("customer_name"),
+        )
 
-    return {
-        "action_result": result,
-        "executed_at": now_iso,
-    }
+    elif final_action == "attempt_manual_charge":
+        result = recovery_actions.attempt_manual_charge(
+            transaction_id=tx_id,
+            razorpay_entity_id=entity_id,
+            entity_type=entity_type,
+        )
+
+    elif final_action == "schedule_retry":
+        result = recovery_actions.schedule_retry(
+            transaction_id=tx_id,
+            razorpay_entity_id=entity_id,
+        )
+
+    else:  # escalate_to_human
+        escalation_reason = (
+            f"Policy gate blocked: {policy_status}"
+            if "blocked" in policy_status
+            else "Agent selected escalation as safest recovery action"
+        )
+        result = recovery_actions.escalate_to_human(
+            transaction_id=tx_id,
+            razorpay_entity_id=entity_id,
+            reason=escalation_reason,
+        )
+
+    logger.info(
+        f"execute_node: tx={tx_id} action={final_action} "
+        f"status={result.get('status')} live={result.get('live')}"
+    )
+
+    return {"action_result": result}
+

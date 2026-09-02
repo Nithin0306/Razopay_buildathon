@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.database import Base, engine
-from app.routers import webhooks
+from app.routers import metrics, webhooks
 
 settings = get_settings()
 
@@ -28,13 +28,18 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.frontend_url],
+    allow_origins=[
+        settings.frontend_url,
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 app.include_router(webhooks.router, prefix="/webhooks", tags=["Webhooks"])
+app.include_router(metrics.router, prefix="/api", tags=["Metrics & Audit"])
 
 
 @app.get("/health", tags=["Health"])
