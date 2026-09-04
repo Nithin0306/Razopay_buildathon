@@ -205,20 +205,79 @@ async def handle_razorpay_webhook(
 
         return {"status": "ignored", "reason": "transaction not found"}
 
-    elif event_name == "subscription.charged":
-        subscription = event_payload.get("subscription", {}).get("entity", {})
-        entity_id = subscription.get("id")
+    elif event_name in ("subscription.charged", "invoice.paid", "payment.captured"):
+        entity_data = (
+            event_payload.get("subscription", {}).get("entity", {})
+            or event_payload.get("invoice", {}).get("entity", {})
+            or event_payload.get("payment", {}).get("entity", {})
+        )
+        entity_id = entity_data.get("id")
+        amount_paid = entity_data.get("amount_paid") or entity_data.get("amount", 0)
+
+        if entity_id:
+            result = await db.execute(
+                select(Transaction).where(
+                    (Transaction.razorpay_entity_id == entity_id)
+                    | (Transaction.recovery_link_id == entity_id)
+                )
+            )
+            tx = result.scalar_one_or_none()
+            if tx:
+                tx.status = TransactionStatus.RECOVERED
+                tx.recovered_at = datetime.now(timezone.utc)
+
+                log_res = await db.execute(
+                    select(AuditLog).where(AuditLog.transaction_id == tx.id)
+                )
+                audit_log = log_res.scalar_one_or_none()
+                if audit_log:
+                    audit_log.amount_recovered_paise = amount_paid or tx.amount_paise
+
+                await db.commit()
+                return {"status": "recovered", "transaction_id": str(tx.id)}
+
+        return {"status": "ignored", "reason": "recovered entity transaction not found"}
+
+    elif event_name == "invoice.payment_failed":
+        invoice = event_payload.get("invoice", {}).get("entity", {})
+        entity_id = invoice.get("id")
+        if not entity_id:
+            return {"status": "ignored", "reason": "missing invoice id"}
+
+        cust_id = invoice.get("customer_id") or f"cust_{entity_id}"
+        email = invoice.get("customer_details", {}).get("email")
+        phone = invoice.get("customer_details", {}).get("contact")
+
+        result = await db.execute(
+            select(Customer).where(Customer.customer_id == cust_id)
+        )
+        customer = result.scalar_one_or_none()
+        if not customer:
+            customer = Customer(customer_id=cust_id, email=email, phone=phone)
+            db.add(customer)
 
         result = await db.execute(
             select(Transaction).where(Transaction.razorpay_entity_id == entity_id)
         )
         tx = result.scalar_one_or_none()
-        if tx:
-            tx.status = TransactionStatus.RECOVERED
-            tx.recovered_at = datetime.now(timezone.utc)
-            await db.commit()
-            return {"status": "recovered", "transaction_id": str(tx.id)}
+        if not tx:
+            tx = Transaction(
+                razorpay_entity_id=entity_id,
+                entity_type=EntityType.PAYMENT,
+                customer_id=cust_id,
+                amount_paise=invoice.get("amount", 0),
+                currency="INR",
+                status=TransactionStatus.FAILED,
+                razorpay_error_reason="invoice_payment_failed",
+                raw_webhook_payload=payload,
+            )
+            db.add(tx)
 
-        return {"status": "ignored", "reason": "subscription transaction not found"}
+        await db.commit()
+        await db.refresh(tx)
+
+        asyncio.create_task(background_agent_trigger(str(tx.id)))
+        return {"status": "received", "transaction_id": str(tx.id)}
 
     return {"status": "ignored", "reason": f"unhandled event {event_name}"}
+

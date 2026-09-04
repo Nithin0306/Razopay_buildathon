@@ -81,7 +81,7 @@ export default function DashboardPage() {
               <HeroProfitCards metrics={metrics} />
 
               {/* Revenue Recovery vs At-Risk Timeline Chart */}
-              <RevenueChart />
+              <RevenueChart metrics={metrics} logs={auditLogs} />
 
               {/* Judge Webhook Simulator Control Panel */}
               <SimulatorPanel onSuccess={loadDashboardData} />

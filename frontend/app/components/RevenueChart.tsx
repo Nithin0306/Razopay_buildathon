@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AuditLogEntry, MetricsResponse } from "@/types";
 import {
   Area,
   AreaChart,
@@ -11,18 +12,12 @@ import {
   YAxis,
 } from "recharts";
 
-// Mock 7-day visual dataset showing revenue growth & recovery progression
-const CHART_DATA = [
-  { day: "Mon", atRisk: 120000, recovered: 45000, txFailed: 4, txRecovered: 2 },
-  { day: "Tue", atRisk: 180000, recovered: 90000, txFailed: 6, txRecovered: 3 },
-  { day: "Wed", atRisk: 250000, recovered: 180000, txFailed: 8, txRecovered: 5 },
-  { day: "Thu", atRisk: 310000, recovered: 240000, txFailed: 10, txRecovered: 7 },
-  { day: "Fri", atRisk: 420000, recovered: 350000, txFailed: 14, txRecovered: 11 },
-  { day: "Sat", atRisk: 580000, recovered: 490000, txFailed: 18, txRecovered: 15 },
-  { day: "Sun", atRisk: 845000, recovered: 720000, txFailed: 28, txRecovered: 22 },
-];
+interface RevenueChartProps {
+  metrics?: MetricsResponse;
+  logs?: AuditLogEntry[];
+}
 
-export default function RevenueChart() {
+export default function RevenueChart({ metrics, logs = [] }: RevenueChartProps) {
   const [isMounted, setIsMounted] = useState(false);
   const [viewMode, setViewMode] = useState<"revenue" | "volume">("revenue");
 
@@ -30,11 +25,81 @@ export default function RevenueChart() {
     setIsMounted(true);
   }, []);
 
+  // Format currency labels for Y-Axis
   const formatCurrencyShort = (val: number) => {
     if (val >= 100000) return `₹${(val / 100000).toFixed(1)}L`;
     if (val >= 1000) return `₹${(val / 1000).toFixed(0)}k`;
     return `₹${val}`;
   };
+
+  // Generate dynamic 7-day timeline from real audit logs and metrics
+  const generateDynamicData = () => {
+    const daysMap: Record<
+      string,
+      { day: string; atRisk: number; recovered: number; txFailed: number; txRecovered: number }
+    > = {};
+
+    const now = new Date();
+    const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+    // Pre-populate last 7 days
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dayLabel = dayNames[d.getDay()];
+      daysMap[dayLabel] = {
+        day: dayLabel,
+        atRisk: 0,
+        recovered: 0,
+        txFailed: 0,
+        txRecovered: 0,
+      };
+    }
+
+    // Populate with real audit logs
+    if (logs && logs.length > 0) {
+      logs.forEach((log) => {
+        const logDate = log.created_at ? new Date(log.created_at) : now;
+        const dayLabel = dayNames[logDate.getDay()];
+        const target = daysMap[dayLabel] || daysMap[dayNames[now.getDay()]];
+
+        if (target) {
+          const amountRs = (log.amount_paise || 0) / 100;
+          const recoveredRs = (log.amount_recovered_paise || 0) / 100;
+
+          target.atRisk += amountRs;
+          target.txFailed += 1;
+
+          if (recoveredRs > 0) {
+            target.recovered += recoveredRs;
+            target.txRecovered += 1;
+          }
+        }
+      });
+    }
+
+    // Accumulate metrics if present
+    const chartArray = Object.values(daysMap);
+
+    // If total metrics are present and logs are sparse, backfill cumulative baseline
+    if (metrics && metrics.total_amount_at_risk_paise > 0) {
+      const totalRiskRs = metrics.total_amount_at_risk_paise / 100;
+      const totalRecRs = metrics.total_amount_recovered_paise / 100;
+
+      // Scale points so final day matches total live metrics
+      const lastIndex = chartArray.length - 1;
+      if (chartArray[lastIndex].atRisk === 0) {
+        chartArray[lastIndex].atRisk = totalRiskRs;
+        chartArray[lastIndex].recovered = totalRecRs;
+        chartArray[lastIndex].txFailed = metrics.total_failed;
+        chartArray[lastIndex].txRecovered = metrics.total_recovered;
+      }
+    }
+
+    return chartArray;
+  };
+
+  const chartData = generateDynamicData();
 
   return (
     <div className="p-6 rounded-3xl bg-slate-900/60 border border-slate-800/80 backdrop-blur-xl shadow-xl mb-8">
@@ -42,9 +107,12 @@ export default function RevenueChart() {
         <div>
           <h3 className="text-base font-bold text-white tracking-tight flex items-center gap-2">
             Revenue Recovery & Profit Progression
+            <span className="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 text-[10px] font-mono border border-emerald-500/30">
+              Live Database Feed
+            </span>
           </h3>
           <p className="text-xs text-slate-400 font-mono">
-            Cumulative Revenue Saved vs At-Risk Failed Checkout Volume
+            Real-time Revenue Saved vs At-Risk Failed Checkout Volume
           </p>
         </div>
 
@@ -78,7 +146,7 @@ export default function RevenueChart() {
         {isMounted ? (
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
-              data={CHART_DATA}
+              data={chartData}
               margin={{ top: 10, right: 10, left: -20, bottom: 0 }}
             >
               <defs>
@@ -154,7 +222,7 @@ export default function RevenueChart() {
           </ResponsiveContainer>
         ) : (
           <div className="h-full w-full flex items-center justify-center text-slate-400 font-mono text-sm">
-            Loading Profit Chart...
+            Loading Live Profit Chart...
           </div>
         )}
       </div>
