@@ -8,8 +8,8 @@ import {
   LayoutDashboard,
   Play,
   ShieldCheck,
-  Zap,
 } from "lucide-react";
+import Image from "next/image";
 
 interface SidebarProps {
   activeTab: string;
@@ -34,8 +34,15 @@ export default function Sidebar({
       <div>
         {/* Brand Logo */}
         <div className="flex items-center gap-3 px-2 py-3 mb-8">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-emerald-500 via-teal-500 to-cyan-500 flex items-center justify-center shadow-lg shadow-emerald-500/20 ring-1 ring-white/20">
-            <Zap className="w-5 h-5 text-slate-950 stroke-[2.5]" />
+          <div className="w-10 h-10 rounded-xl overflow-hidden bg-white shadow-lg shadow-emerald-500/20 ring-1 ring-white/20 shrink-0">
+            <Image
+              src="/logo.png"
+              alt="Razorpay"
+              width={40}
+              height={40}
+              className="w-full h-full object-cover"
+              priority
+            />
           </div>
           <div>
             <h1 className="font-bold text-white tracking-tight text-base leading-tight">
