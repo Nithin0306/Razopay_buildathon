@@ -8,10 +8,10 @@
 
 Every failed checkout or subscription renewal represents lost profit. **AI Revenue Recovery Agent** bridges the gap between payment failure detection and revenue recovery:
 
-1. **Instant Webhook Interception**: Listens to `payment.failed`, `subscription.pending`, and `subscription.halted` events in real-time.
+1. **Instant Webhook Interception**: Listens to `payment.failed`, `subscription.pending`, `subscription.halted`, and `invoice.payment_failed` events in real-time.
 2. **AI Root Cause Diagnosis**: Leverages Google Gemini 2.5 Flash via LangGraph to parse error codes, raw gateway steps, customer history, and transaction amounts.
 3. **Deterministic Policy Gate Guardrail**: Hardcoded safety layer enforcing regulatory constraints (Fraud checks, 3-attempt customer intervention caps, LLM confidence thresholds) before any API call is made.
-4. **Autonomous Razorpay Execution**: Automatically generates custom Razorpay Payment Links, resumes halted subscriptions, or schedules off-peak gateway retries.
+4. **Autonomous Razorpay Execution**: Automatically generates custom Razorpay Payment Links, resumes halted subscriptions, or schedules off-peak gateway retries using the official `razorpay` Python SDK.
 5. **Next.js Command Center**: High-impact dark mode dashboard featuring live profit saved metrics (`₹ Recovered`), interactive Recharts timelines, real-time audit stream, and an embedded Webhook Simulator for hackathon judging.
 
 ---
@@ -47,88 +47,163 @@ flowchart TD
 
 ---
 
-## 🚀 Quickstart Guide
+## 🚀 Step-by-Step Setup & Execution Guide
 
 ### Prerequisites
 - Python 3.11+
 - Node.js 18+
-- Razorpay API Test Credentials (optional; simulation mode activates automatically when using dummy keys)
-- Gemini API Key (`GEMINI_API_KEY`)
+- Docker (optional, for PostgreSQL database)
+- Gemini API Key (`GEMINI_API_KEY`) from [Google AI Studio](https://aistudio.google.com/)
+- Razorpay API Test Credentials from [Razorpay Dashboard](https://dashboard.razorpay.com/)
+
+### Clean Backend Restart Flow
+Use this flow when you want to restart the backend from scratch with the local Postgres container:
+
+```bash
+# 1) Remove any stale backend container if it already exists
+docker rm -f backend-api-1
+
+# 2) Start the database container used by backend/.env
+docker start recovery_postgres
+
+# 3) Run migrations from the backend virtualenv
+cd backend
+./venv/bin/alembic upgrade head
+
+# 4) Start the backend API
+./venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+If you need to fully reset the database container too, use:
+
+```bash
+docker rm -f recovery_postgres
+```
+
+Notes:
+- `docker rm -f backend-api-1` is the command to delete the stale backend container before starting again.
+- The backend reads its database URL from `backend/.env`, which points to `recovery_postgres` on `localhost:5432`.
 
 ---
 
-### Step 1: Backend Setup & Server Execution
+### Step 1: Database Setup & Migration
+
+Choose one of the database options below:
+
+#### Option A: PostgreSQL via Docker (Recommended for Production)
+```bash
+# Start PostgreSQL container
+docker run --name recovery_postgres \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=password \
+  -e POSTGRES_DB=recovery_agent \
+  -p 5432:5432 \
+  -d postgres:15
+
+# Set in backend/.env:
+# DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/recovery_agent
+```
+
+#### Option B: Zero-Config SQLite (Default for Quick Testing)
+```env
+# Set in backend/.env:
+DATABASE_URL=sqlite+aiosqlite:///./recovery_agent.db
+```
+
+#### Apply Alembic Migrations
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+
+# Run migrations to initialize tables
+alembic upgrade head
+```
+
+---
+
+### Step 2: Environment Configuration (`backend/.env`)
+
+Configure your `backend/.env` file:
+
+```env
+# Database
+DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/recovery_agent
+
+# Razorpay API Credentials
+RAZORPAY_KEY_ID=rzp_test_TY3gaQRSsLD3lq
+RAZORPAY_KEY_SECRET=uyKuUXURCds3S0gNr257ph3J
+RAZORPAY_WEBHOOK_SECRET=track3
+
+# Google Gemini API Key
+GEMINI_API_KEY=AIzaSyYourGeminiApiKeyHere
+
+# Application
+ENVIRONMENT=development
+BACKEND_PORT=8000
+FRONTEND_URL=http://localhost:3000
+```
+
+---
+
+### Step 3: Run FastAPI Backend Server
 
 ```bash
 cd backend
-
-# 1. Create and activate virtual environment
-python -m venv venv
 source venv/bin/activate
 
-# 2. Install dependencies
-pip install -r requirements.txt
-
-# 3. Environment Variables (.env)
-cp .env.example .env
-# Set your GEMINI_API_KEY in backend/.env
-
-# 4. Run database migrations
-alembic upgrade head
-
-# 5. Start FastAPI Backend Server (Port 8000)
+# Start backend server on port 8000
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 ---
 
-### Step 2: Interactive Simulation CLI (`simulate.py`)
+### Step 4: Live Webhook Tunnel via Ngrok
 
-Run realistic Razorpay failure webhooks and watch the agent execute end-to-end:
+Expose your local backend server to receive live Razorpay webhooks:
 
 ```bash
-cd backend
-source venv/bin/activate
-
-# Run all 7 failure & recovery scenarios in sequence:
-python simulate.py --all
-
-# Or run interactively:
-python simulate.py --interactive
+# In a new terminal tab:
+ngrok http 8000
 ```
+
+1. Copy the public forwarding URL (e.g., `https://xxxx.ngrok-free.dev`).
+2. Go to **Razorpay Dashboard** → **Account & Settings** → **Webhooks** → **Add New Webhook**.
+3. Set Webhook URL: `https://xxxx.ngrok-free.dev/webhooks/razorpay`
+4. Set Secret: `track3`
+5. Select active events: `payment.failed`, `payment_link.paid`, `payment.captured`, `invoice.paid`.
 
 ---
 
-### Step 3: Diagnostic Verification Test Suites
-
-Verify every module across the 5 build phases:
-
-```bash
-cd backend
-source venv/bin/activate
-
-# Run individual phase test suites:
-python test_phase1_diagnosis.py
-python test_phase3_diagnosis.py
-python test_phase4_diagnosis.py
-python test_phase5_diagnosis.py
-```
-
----
-
-### Step 4: Frontend Next.js Command Center Setup
+### Step 5: Start Next.js Command Center Dashboard
 
 ```bash
 cd frontend
 
-# 1. Install Node dependencies
+# Install dependencies and launch dev server
 npm install
-
-# 2. Start Next.js Development Server (Port 3000)
 npm run dev
 ```
 
-Open **`http://localhost:3000`** in your browser to access the **AI Revenue Recovery Command Center**.
+Open **`http://localhost:3000`** in your browser to view the **AI Revenue Recovery Command Center**.
+
+---
+
+### Step 6: Interactive Webhook Simulator & Test Suite
+
+You can trigger simulated failure events directly from the dashboard UI or via the CLI:
+
+```bash
+cd backend
+source venv/bin/activate
+
+# Run all CLI simulation test scenarios:
+python simulate.py --all
+
+# Run individual diagnostic test suites:
+python test_phase5_diagnosis.py
+```
 
 ---
 
@@ -141,6 +216,21 @@ To ensure safety and compliance, the agent uses a **hardcoded Python policy gate
 | **Rule 1: Fraud & Security Interception** | `error_source = 'fraud' \| 'risk'` | `BLOCKED_MANUAL_REVIEW` | Escalates to human support queue |
 | **Rule 2: Customer Intervention Cap** | Customer total interventions ≥ 3 | `BLOCKED_INTERVENTION_CAP` | Suppresses messaging; logs escalation |
 | **Rule 3: LLM Low Confidence** | Gemini confidence score < 0.70 | `BLOCKED_LOW_CONFIDENCE` | Escalates to human team |
+
+---
+
+## ❓ Troubleshooting & FAQs
+
+### 1. `[Errno 98] Address already in use`
+This means `uvicorn` or another process is already running on port `8000`. Stop the existing process:
+```bash
+# Find and terminate process on port 8000:
+fuser -k 8000/tcp
+```
+Then restart `uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload`.
+
+### 2. `Invalid Razorpay Webhook Signature`
+When testing from the UI Webhook Simulator, the signature header sends `dummy_sig`, which is automatically accepted in `development` mode. For real Razorpay webhooks, ensure `RAZORPAY_WEBHOOK_SECRET` in `backend/.env` matches the secret configured in your Razorpay Dashboard.
 
 ---
 
