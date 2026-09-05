@@ -163,9 +163,10 @@ Configure your `backend/.env` file:
 DATABASE_URL=postgresql+asyncpg://postgres:password@localhost:5432/recovery_agent
 
 # Razorpay API Credentials
-RAZORPAY_KEY_ID=rzp_test_TY3gaQRSsLD3lq
-RAZORPAY_KEY_SECRET=uyKuUXURCds3S0gNr257ph3J
-RAZORPAY_WEBHOOK_SECRET=track3
+RAZORPAY_KEY_ID=rzp_test_XXXXXXXXXXXX
+RAZORPAY_KEY_SECRET=XXXXXXXXXXXXXXXXXXXXXXXX
+RAZORPAY_WEBHOOK_SECRET=XXXXXXXXXXXXXXXXXXXXXXXX
+
 
 # Google Gemini API Key
 GEMINI_API_KEY=AIzaSyYourGeminiApiKeyHere
