@@ -1,6 +1,23 @@
 # AI Revenue Recovery Agent (Razorpay Buildathon — Track 3)
 
-> **A closed-loop autonomous AI agent system that intercepts failed Razorpay transactions, diagnoses root causes using Gemini 2.5 Flash, evaluates deterministic safety policy guardrails, and executes automated revenue recovery.**
+> **A closed-loop autonomous AI agent system that intercepts failed Razorpay transactions, diagnoses root causes using an LLM, evaluates deterministic safety policy guardrails, and executes automated revenue recovery.**
+
+## 🎥 Video Pitch
+
+Watch the project walkthrough and five-minute demo: [AI Revenue Recovery Agent video pitch](https://drive.google.com/file/d/1ORxKVlAUJrRI2jaGrOAJVOiAgkxYEY2L/view?usp=sharing)
+
+## 💡 The Product in One Minute
+
+Payment failure is not the end of a transaction; it is a decision point. This project turns that moment into an automated, explainable recovery workflow:
+
+1. A Razorpay failure webhook arrives at the FastAPI backend.
+2. The system stores the customer, transaction, and original gateway payload.
+3. The configured AI/LLM diagnoses the likely root cause and suggests a recovery strategy. If the AI provider is unavailable, deterministic heuristics keep the workflow testable.
+4. A Python policy gate checks fraud risk, customer intervention history, and confidence before any automated recovery action is allowed.
+5. The approved action is executed through a normalized recovery tool and written to the audit log.
+6. A later success webhook can close the loop by changing the transaction to `RECOVERED` and updating recovered revenue.
+
+The result is a system that is designed to recover good transactions quickly while deliberately sending risky or uncertain transactions to a human.
 
 ---
 
@@ -9,10 +26,24 @@
 Every failed checkout or subscription renewal represents lost profit. **AI Revenue Recovery Agent** bridges the gap between payment failure detection and revenue recovery:
 
 1. **Instant Webhook Interception**: Listens to `payment.failed`, `subscription.pending`, `subscription.halted`, and `invoice.payment_failed` events in real-time.
-2. **AI Root Cause Diagnosis**: Leverages Google Gemini 2.5 Flash via LangGraph to parse error codes, raw gateway steps, customer history, and transaction amounts.
+2. **AI Root Cause Diagnosis**: Uses an LLM through LangGraph to parse error codes, raw gateway steps, customer history, and transaction amounts.
 3. **Deterministic Policy Gate Guardrail**: Hardcoded safety layer enforcing regulatory constraints (Fraud checks, 3-attempt customer intervention caps, LLM confidence thresholds) before any API call is made.
 4. **Autonomous Razorpay Execution**: Automatically generates custom Razorpay Payment Links, resumes halted subscriptions, or schedules off-peak gateway retries using the official `razorpay` Python SDK.
 5. **Next.js Command Center**: High-impact dark mode dashboard featuring live profit saved metrics (`₹ Recovered`), interactive Recharts timelines, real-time audit stream, and an embedded Webhook Simulator for hackathon judging.
+
+### What Is Demonstrably Working
+
+| Capability | Working behavior |
+|---|---|
+| Webhook ingestion | Accepts payment, subscription, invoice, and payment-link events through FastAPI routes. |
+| Root-cause diagnosis | Identifies insufficient funds, expired cards, bank or network failures, fraud, and unknown failures. |
+| Recovery strategy | Generates a payment link, schedules a retry, attempts a subscription action where applicable, or escalates. |
+| Safety enforcement | Blocks fraud or risk sources, three-or-more prior interventions, and confidence below 70%. |
+| Persistence | Stores transactions, customers, raw payloads, agent reasoning, policy results, and action results. |
+| Operational visibility | Shows metrics, recovery rate, revenue at risk, audit entries, search, filters, details, and pagination. |
+| Demoability | Provides four preset webhook scenarios and a live execution console without requiring a real failed checkout. |
+
+The Razorpay executor supports two modes. With valid credentials it can make a test/live SDK call; with missing or placeholder credentials it returns a clearly marked simulation result so the rest of the workflow remains demonstrable.
 
 ---
 
@@ -26,7 +57,7 @@ flowchart TD
     end
 
     subgraph Agent ["2. LangGraph AI Agent & Policy Engine"]
-        API -->|Background Task| Node1[Diagnose Node: Gemini 2.5 Flash]
+        API -->|Background Task| Node1[Diagnose Node: AI/LLM]
         Node1 -->|JSON Root Cause & Confidence| Node2[Strategize Node: Recovery Policy Selector]
         Node2 --> Gate{Deterministic Policy Gate}
         
@@ -53,7 +84,7 @@ flowchart TD
 - Python 3.11+
 - Node.js 18+
 - Docker (optional, for PostgreSQL database)
-- Gemini API Key (`GEMINI_API_KEY`) from [Google AI Studio](https://aistudio.google.com/)
+- AI provider API key. Gemini 2.5 Flash is supported through `GEMINI_API_KEY` and [Google AI Studio](https://aistudio.google.com/).
 - Razorpay API Test Credentials from [Razorpay Dashboard](https://dashboard.razorpay.com/)
 
 ### Clean Backend Restart Flow
@@ -205,6 +236,27 @@ python simulate.py --all
 python test_phase5_diagnosis.py
 ```
 
+#### Recommended Dashboard Demo
+
+1. Open `http://localhost:3000` and start on **Overview**.
+2. Open **Webhook Simulator** and run **Card Declined — Insufficient Funds** to show a recovery-link decision.
+3. Run **Bank Gateway Technical Timeout** to show a scheduled retry.
+4. Run **Security & Fraud Risk Flag** to show a deterministic policy block and human escalation.
+5. Open **Live AI Audit Stream** to inspect diagnosis, confidence, policy status, and final action.
+6. Open **Policy Guardrails** to explain why unsafe automation is blocked.
+
+The **Customer Pays Recovery Link** preset represents the final `payment_link.paid` callback. It updates revenue only when its payment-link ID matches a stored recovery transaction; for a truthful live demo, complete the generated Razorpay test link or send a matching success webhook.
+
+### API Surface
+
+| Method | Endpoint | Purpose |
+|---|---|---|
+| `GET` | `/health` | Confirm that the backend is available. |
+| `POST` | `/webhooks/razorpay` | Ingest and process Razorpay webhook events. |
+| `GET` | `/api/metrics` | Return recovery, risk, escalation, and policy counters. |
+| `GET` | `/api/audit-log?page=1&limit=20` | Return the paginated explainability trail. |
+| `GET` | `/api/transactions?status=recovered` | List transactions, optionally filtered by status. |
+
 ---
 
 ## 🛡️ Deterministic Policy Gate Guardrail Rules
@@ -215,7 +267,7 @@ To ensure safety and compliance, the agent uses a **hardcoded Python policy gate
 |---|---|---|---|
 | **Rule 1: Fraud & Security Interception** | `error_source = 'fraud' \| 'risk'` | `BLOCKED_MANUAL_REVIEW` | Escalates to human support queue |
 | **Rule 2: Customer Intervention Cap** | Customer total interventions ≥ 3 | `BLOCKED_INTERVENTION_CAP` | Suppresses messaging; logs escalation |
-| **Rule 3: LLM Low Confidence** | Gemini confidence score < 0.70 | `BLOCKED_LOW_CONFIDENCE` | Escalates to human team |
+| **Rule 3: LLM Low Confidence** | AI confidence score < 0.70 | `BLOCKED_LOW_CONFIDENCE` | Escalates to human team |
 
 ---
 
@@ -248,7 +300,8 @@ When testing from the UI Webhook Simulator, the signature header sends `dummy_si
 │   │   ├── routers/          # FastAPI routes (webhooks.py, metrics.py)
 │   │   ├── tools/            # Razorpay SDK Singleton & Recovery Executors
 │   │   ├── database.py       # Async SQLAlchemy engine & session manager
-│   │   ├── models.py         # DB Schemas (Transaction, Customer, AuditLog)
+│   │   ├── models/           # DB Schemas (Transaction, Customer, AuditLog)
+│   │   │   └── db.py
 │   │   └── main.py           # FastAPI application entrypoint
 │   ├── simulate.py           # CLI Webhook & Recovery Simulator
 │   ├── test_phase5_diagnosis.py # Automated Diagnostic Test Suites
@@ -268,7 +321,7 @@ When testing from the UI Webhook Simulator, the signature header sends `dummy_si
 
 ## 🎯 Tech Stack Summary
 
-- **AI & LLM Orchestration**: Python 3.11+, LangGraph, Google Gemini 2.5 Flash API
+- **AI & LLM Orchestration**: Python 3.11+, LangGraph, configurable AI provider with Gemini 2.5 Flash support
 - **Backend Framework**: FastAPI, AsyncIO, Pydantic v2
 - **Database & Persistence**: SQLite / PostgreSQL, SQLAlchemy 2.0 (Async), Alembic
 - **Razorpay Integration**: Official `razorpay` Python SDK (v2.0.1) with dual Live / High-Fidelity Simulation support
